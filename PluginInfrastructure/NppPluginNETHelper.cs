@@ -182,10 +182,124 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
             //nmhdr.IdFrom = ctrlIdNpp;
     }
 
+    /// <summary>
+    /// Deprecated since Notepad++ v8.  Use toolbarIconsWithDarkMode instead
+    /// (NPPM_ADDTOOLBARICON / NPPM_GETTOOLBARCOUNT are no longer available in NPP 8.x).
+    /// Kept for backward compatibility with Notepad++ v7.x.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct toolbarIcons
     {
         public IntPtr hToolbarBmp;
         public IntPtr hToolbarIcon;
+    }
+
+    /// <summary>
+    /// Structure expected by Notepad++ v8.x as lParam of NPPM_ADDTOOLBARICON_FORDARKMODE.
+    /// The plugin must provide a 16x16 monochrome bitmap (hToolbarIconDarkMode)
+    /// that adapts to the light/dark mode of Notepad++.
+    /// See "toolbarIconsWithDarkMode" in Notepad_plus_msgs.h of Notepad++ v8.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct toolbarIconsWithDarkMode
+    {
+        public IntPtr hToolbarBmp;                  // HBITMAP: legacy 16x16 color bitmap (kept for compat, may be IntPtr.Zero)
+        public IntPtr hToolbarIcon;                 // HICON:   legacy icon (kept for compat, may be IntPtr.Zero)
+        public IntPtr hToolbarIconDarkMode;         // HBITMAP: 16x16 monochrome bitmap used in dark mode
+
+        /// <summary>
+        /// Builds the structure from bitmaps. All GDI handles created here are
+        /// transferred to Notepad++, which takes ownership of them (it destroys
+        /// them when the plugin is unloaded / on shutdown).
+        /// </summary>
+        public static toolbarIconsWithDarkMode Create(Bitmap legacyBmp, Bitmap darkModeMonoGlyph)
+        {
+            var icons = new toolbarIconsWithDarkMode();
+            if (legacyBmp != null)
+            {
+                icons.hToolbarBmp = legacyBmp.GetHbitmap();
+                icons.hToolbarIcon = legacyBmp.GetHicon();
+            }
+            if (darkModeMonoGlyph != null)
+                icons.hToolbarIconDarkMode = darkModeMonoGlyph.GetHbitmap();
+            return icons;
+        }
+    }
+
+    /// <summary>
+    /// Helper class to register toolbar icons on both Notepad++ v7.x and v8.x.
+    /// On NPP 8.* the old NPPM_ADDTOOLBARICON message was removed; plugins must send
+    /// NPPM_ADDTOOLBARICON_FORDARKMODE with a toolbarIconsWithDarkMode structure
+    /// containing a 16x16 monochrome glyph (black pixels on transparent background).
+    /// </summary>
+    public static class ToolbarHelper
+    {
+        /// <summary>
+        /// The magic mask color used by the classic Notepad++ toolbar bitmaps: every
+        /// pixel that must be transparent is painted pure magenta (RGB 255,0,255).
+        /// Notepad++ removes this color when drawing the toolbar / tab icons.
+        /// </summary>
+        public static readonly Color MagicMagicColor = Color.FromArgb(255, 0, 255);
+
+        /// <summary>
+        /// Builds the standard "double sized" bitmap pair expected by Notepad++ v8.x
+        /// (see DllInterface::getToolBarList / toolbarIconsWithDarkMode handling in
+        /// NPP sources): a 32x32 image containing the 32x32 glyph on top and the
+        /// 16x16 glyph below, plus its mask bitmap (same layout, magenta background).
+        /// The plugin resources (Fluent-style icons) already store both sizes in one
+        /// 32x64 strip, so this method just splits them apart.
+        /// </summary>
+        /// <param name="strip">32x64 bitmap: [0..31] = 32x32 icon, [32..63] = 16x16 icon</param>
+        public static void GetDoubleSizedBitmaps(Bitmap strip, out Bitmap bmp, out Bitmap bmpMask)
+        {
+            if (strip.Width != 32 || strip.Height != 64)
+                throw new ArgumentException("Icon strip must be 32x64 (32x32 icon over 16x16 icon)", "strip");
+
+            bmp = new Bitmap(32, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            bmpMask = new Bitmap(32, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            using (Graphics g = Graphics.FromImage(bmp))
+                g.DrawImage(strip, new Rectangle(0, 0, 32, 64), 0, 0, 32, 64, GraphicsUnit.Pixel);
+
+            for (int y = 0; y < 64; y++)
+            {
+                for (int x = 0; x < 32; x++)
+                {
+                    Color c = strip.GetPixel(x, y);
+                    bool isBackground = c.ToArgb() == MagicMagicColor.ToArgb();
+                    bmpMask.SetPixel(x, y, isBackground ? Color.White : Color.Black);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds an icon to the Notepad++ toolbar for the specified command id using the
+        /// NPP 8.x mechanism (NPPM_ADDTOOLBARICON_FORDARKMODE + toolbarIconsWithDarkMode).
+        /// </summary>
+        /// <param name="cmdId">funcItem._cmdID of the menu command the icon belongs to</param>
+        /// <param name="bmp">32x64 double-sized color bitmap (32x32 over 16x16)</param>
+        /// <param name="bmpMask">32x64 mask bitmap for bmp (white = background)</param>
+        public static void AddToToolbar(int cmdId, Bitmap bmp, Bitmap bmpMask)
+        {
+            IntPtr nppHandle = PluginBase.nppData._nppHandle;
+
+            var tbIcons = new toolbarIconsWithDarkMode();
+            tbIcons.hToolbarBmp = bmp.GetHbitmap();           // ownership passed to Notepad++
+            tbIcons.hToolbarIcon = IntPtr.Zero;               // legacy HICON not needed on NPP 8.x
+            tbIcons.hToolbarIconDarkMode = bmpMask.GetHbitmap(); // ownership passed to Notepad++
+
+            IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons));
+            try
+            {
+                Marshal.StructureToPtr(tbIcons, pTbIcons, false);
+                Win32.SendMessage(nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON_FORDARKMODE, cmdId, pTbIcons);
+            }
+            finally
+            {
+                // only the native memory block is released; the GDI handles inside
+                // are now owned by Notepad++ (it destroys them on plugin unload/shutdown)
+                Marshal.FreeHGlobal(pTbIcons);
+            }
+        }
     }
 }
