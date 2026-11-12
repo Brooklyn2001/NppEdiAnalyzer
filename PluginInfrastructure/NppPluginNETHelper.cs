@@ -235,66 +235,70 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
     public static class ToolbarHelper
     {
         /// <summary>
-        /// Converts a color Bitmap into a 16x16 monochrome-compatible 32bpp ARGB bitmap
-        /// where all non-transparent colored pixels become solid black. This is the
-        /// format expected by the Notepad++ v8.x toolbar (it recolors the glyph itself
-        /// depending on the current light/dark theme).
+        /// The magic mask color used by the classic Notepad++ toolbar bitmaps: every
+        /// pixel that must be transparent is painted pure magenta (RGB 255,0,255).
+        /// Notepad++ removes this color when drawing the toolbar / tab icons.
         /// </summary>
-        public static Bitmap CreateMonochromeGlyphBitmap(Bitmap source)
+        public static readonly Color MagicMagicColor = Color.FromArgb(255, 0, 255);
+
+        /// <summary>
+        /// Builds the standard "double sized" bitmap pair expected by Notepad++ v8.x
+        /// (see DllInterface::getToolBarList / toolbarIconsWithDarkMode handling in
+        /// NPP sources): a 32x32 image containing the 32x32 glyph on top and the
+        /// 16x16 glyph below, plus its mask bitmap (same layout, magenta background).
+        /// The plugin resources (Fluent-style icons) already store both sizes in one
+        /// 32x64 strip, so this method just splits them apart.
+        /// </summary>
+        /// <param name="strip">32x64 bitmap: [0..31] = 32x32 icon, [32..63] = 16x16 icon</param>
+        public static void GetDoubleSizedBitmaps(Bitmap strip, out Bitmap bmp, out Bitmap bmpMask)
         {
-            const int size = 16;
-            Bitmap mono = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (Graphics g = Graphics.FromImage(mono))
+            if (strip.Width != 32 || strip.Height != 64)
+                throw new ArgumentException("Icon strip must be 32x64 (32x32 icon over 16x16 icon)", "strip");
+
+            bmp = new Bitmap(32, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            bmpMask = new Bitmap(32, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            using (Graphics g = Graphics.FromImage(bmp))
+                g.DrawImage(strip, new Rectangle(0, 0, 32, 64), 0, 0, 32, 64, GraphicsUnit.Pixel);
+
+            for (int y = 0; y < 64; y++)
             {
-                g.Clear(Color.Transparent);
-                using (var temp = new Bitmap(size, size))
+                for (int x = 0; x < 32; x++)
                 {
-                    using (Graphics gt = Graphics.FromImage(temp))
-                    {
-                        gt.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                        gt.DrawImage(source, 0, 0, size, size);
-                    }
-                    for (int y = 0; y < size; y++)
-                    {
-                        for (int x = 0; x < size; x++)
-                        {
-                            Color c = temp.GetPixel(x, y);
-                            if (c.A > 0 && !(c.R > 240 && c.G > 240 && c.B > 240))
-                                mono.SetPixel(x, y, Color.Black);   // NPP will re-color this glyph at runtime
-                        }
-                    }
+                    Color c = strip.GetPixel(x, y);
+                    bool isBackground = c.ToArgb() == MagicMagicColor.ToArgb();
+                    bmpMask.SetPixel(x, y, isBackground ? Color.White : Color.Black);
                 }
             }
-            return mono;
         }
 
         /// <summary>
-        /// Adds the given bitmaps to the Notepad++ toolbar for the specified command id.
-        /// Automatically picks the correct message/structure for NPP 7.x vs NPP 8.x.
+        /// Adds an icon to the Notepad++ toolbar for the specified command id using the
+        /// NPP 8.x mechanism (NPPM_ADDTOOLBARICON_FORDARKMODE + toolbarIconsWithDarkMode).
         /// </summary>
         /// <param name="cmdId">funcItem._cmdID of the menu command the icon belongs to</param>
-        /// <param name="legacyBmp">color bitmap used by NPP 7.x (and passed through for compat)</param>
-        /// <param name="monoGlyph">16x16 monochrome glyph used by NPP 8.x; created from legacyBmp when null</param>
-        public static void AddToToolbar(int cmdId, Bitmap legacyBmp, Bitmap monoGlyph = null)
+        /// <param name="bmp">32x64 double-sized color bitmap (32x32 over 16x16)</param>
+        /// <param name="bmpMask">32x64 mask bitmap for bmp (white = background)</param>
+        public static void AddToToolbar(int cmdId, Bitmap bmp, Bitmap bmpMask)
         {
             IntPtr nppHandle = PluginBase.nppData._nppHandle;
 
-            if (monoGlyph == null)
-                monoGlyph = CreateMonochromeGlyphBitmap(legacyBmp);
+            var tbIcons = new toolbarIconsWithDarkMode();
+            tbIcons.hToolbarBmp = bmp.GetHbitmap();           // ownership passed to Notepad++
+            tbIcons.hToolbarIcon = IntPtr.Zero;               // legacy HICON not needed on NPP 8.x
+            tbIcons.hToolbarIconDarkMode = bmpMask.GetHbitmap(); // ownership passed to Notepad++
 
-            // --- NPP 8.x path: NPPM_ADDTOOLBARICON_FORDARKMODE (msg + 83) ---
-            toolbarIconsWithDarkMode tbIcons8 = toolbarIconsWithDarkMode.Create(legacyBmp, monoGlyph);
-            IntPtr pTbIcons8 = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons8));
+            IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons));
             try
             {
-                Marshal.StructureToPtr(tbIcons8, pTbIcons8, false);
-                Win32.SendMessage(nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON_FORDARKMODE, cmdId, pTbIcons8);
+                Marshal.StructureToPtr(tbIcons, pTbIcons, false);
+                Win32.SendMessage(nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON_FORDARKMODE, cmdId, pTbIcons);
             }
             finally
             {
                 // only the native memory block is released; the GDI handles inside
-                // are now owned by Notepad++ (see toolbarIconsWithDarkMode.Create)
-                Marshal.FreeHGlobal(pTbIcons8);
+                // are now owned by Notepad++ (it destroys them on plugin unload/shutdown)
+                Marshal.FreeHGlobal(pTbIcons);
             }
         }
     }
