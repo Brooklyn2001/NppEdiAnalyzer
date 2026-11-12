@@ -165,8 +165,17 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
 
         /// <summary>
         ///void WM_ADDTOOLBARICON(UINT funcItem[X]._cmdID, toolbarIcons icon)
+        /// Deprecated since Notepad++ v8. Do not use with NPP 8.*, use
+        /// NPPM_ADDTOOLBARICON_FORDARKMODE instead. Kept for backward compatibility.
         /// </summary>
-        NPPM_ADDTOOLBARICON = Constants.NPPMSG + 41,
+        NPPM_ADDTOOLBARICON_DEPRECATED = Constants.NPPMSG + 41,
+
+        /// <summary>
+        /// void NPPM_ADDTOOLBARICON_FORDARKMODE(UINTptr funcItem[X]._cmdID, toolbarIconsWithDarkMode icon)
+        /// Available since Notepad++ v8 - this is the ONLY way to add a toolbar icon in NPP 8.*
+        /// (the old NPPM_ADDTOOLBARICON (msg+41) has been removed from Notepad++ v8).
+        /// </summary>
+        NPPM_ADDTOOLBARICON_FORDARKMODE = Constants.NPPMSG + 83,
 
         /// <summary>
         ///winVer NPPM_GETWINDOWSVERSION(0, 0)

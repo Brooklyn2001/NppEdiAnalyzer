@@ -210,32 +210,19 @@ The current scroll ratio is {Math.Round(scrollPercentage, 2)}%.
 
         static internal void SetToolBarIcon()
         {
-            toolbarIcons tbIcons = new toolbarIcons();
-            tbIcons.hToolbarBmp = tbBmp.GetHbitmap();
-            IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons));
-            Marshal.StructureToPtr(tbIcons, pTbIcons, false);
-            Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON, PluginBase._funcItems.Items[idFrmGotToLine]._cmdID, pTbIcons);
-            Marshal.FreeHGlobal(pTbIcons);
+            // NPP 8.* removed the old NPPM_ADDTOOLBARICON message; icons must be
+            // registered via ToolbarHelper (NPPM_ADDTOOLBARICON_FORDARKMODE).
+            ToolbarHelper.AddToToolbar(PluginBase._funcItems.Items[idFrmGotToLine]._cmdID, tbBmp);
         }
 
         static internal void SetToolBarIconFormat()
         {
-            toolbarIcons tbIcons = new toolbarIcons();
-            tbIcons.hToolbarBmp = tbBmpFormat.GetHbitmap();
-            IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons));
-            Marshal.StructureToPtr(tbIcons, pTbIcons, false);
-            Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON, PluginBase._funcItems.Items[idMnuFormat]._cmdID, pTbIcons);
-            Marshal.FreeHGlobal(pTbIcons);
+            ToolbarHelper.AddToToolbar(PluginBase._funcItems.Items[idMnuFormat]._cmdID, tbBmpFormat);
         }
 
         static internal void SetToolBarIconUnFormat()
         {
-            toolbarIcons tbIcons = new toolbarIcons();
-            tbIcons.hToolbarBmp = tbBmpUnFormat.GetHbitmap();
-            IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIcons));
-            Marshal.StructureToPtr(tbIcons, pTbIcons, false);
-            Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON, PluginBase._funcItems.Items[idMnuUnformat]._cmdID, pTbIcons);
-            Marshal.FreeHGlobal(pTbIcons);
+            ToolbarHelper.AddToToolbar(PluginBase._funcItems.Items[idMnuUnformat]._cmdID, tbBmpUnFormat);
         }
 
 

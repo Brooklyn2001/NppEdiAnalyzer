@@ -43,6 +43,15 @@ namespace Kbg.NppPluginNET
             return _ptrPluginName;
         }
 
+        // Notepad++ v8.x also looks for the (const char*) getUnicodeName() export.
+        // The plugin is Unicode, so we return the UTF-8 bytes of the same name;
+        // this improves compatibility with NPP 8.* loaders (and is simply ignored by older versions).
+        [DllExport(CallingConvention = CallingConvention.Cdecl)]
+        static IntPtr getUnicodeName()
+        {
+            return Marshal.StringToHGlobalAnsi(Main.PluginName);
+        }
+
         [DllExport(CallingConvention = CallingConvention.Cdecl)]
         static void beNotified(IntPtr notifyCode)
         {
